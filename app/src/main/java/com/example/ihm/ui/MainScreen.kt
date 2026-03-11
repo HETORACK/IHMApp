@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddTask
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.*
@@ -105,13 +106,20 @@ fun TabSelector(selectedTab: String, onTabSelected: (String) -> Unit) {
             .height(60.dp)
             .background(Color(0xFF5046BD), RoundedCornerShape(30.dp, 30.dp))
             .padding(4.dp)
-    ) {
+     ) {
         TabButton(
             text = "Tareas",
             icon = Icons.Default.AddTask ,
             isSelected = selectedTab == "Tareas",
             modifier = Modifier.weight(1f),
             onClick = { onTabSelected("Tareas") }
+        )
+        TabButton(
+            text = "Nero",
+            icon = Icons.Default.ChatBubble,
+            isSelected = selectedTab == "Habla",
+            modifier = Modifier.weight(1f),
+            onClick = { onTabSelected("Habla") }
         )
         TabButton(
             text = "Eventos",
