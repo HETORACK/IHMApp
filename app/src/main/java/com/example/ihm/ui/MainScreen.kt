@@ -84,6 +84,7 @@ fun MainScreen() {
         ) {
             when (selectedTab) {
                 "Tareas" -> RecordatoriosScreen()
+                "Habla" -> ChatScreen()
                 "Eventos" -> EventosScreen()
             }
 
@@ -256,7 +257,7 @@ fun VoiceInputBar(
                     shape = CircleShape
                 ) {
                     Icon(
-                        Icons.Default.Mic,
+                        imageVector = Icons.Default.Mic,
                         contentDescription = "Microfono",
                         modifier = Modifier.size(60.dp)
                     )
