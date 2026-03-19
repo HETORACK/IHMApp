@@ -13,10 +13,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -24,22 +26,30 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ihm.VoiceToTextParser
-
-data class ChatMessage(
-    val text: String,
-    val isUser: Boolean
-)
+import com.example.ihm.VoiceToTextParserState
+import com.example.ihm.viewmodel.ChatViewModel
 
 @Composable
-fun ChatScreen() {
-    var messages by remember { mutableStateOf(listOf(
-        ChatMessage("¡Hola! Soy Nero, tu asistente IA. ¿En qué puedo ayudarte hoy?", false)
-    )) }
-    var inputText by remember { mutableStateOf("") }
+fun ChatScreen(
+    viewModel: ChatViewModel,
+    useCustomKeyboard: Boolean = false,
+    fontSize: Int
+) {
+    val messages by viewModel.messages.collectAsState()
+    val inputText by viewModel.draftMessage.collectAsState()
+    val listState = rememberLazyListState()
+    var showCustomKeyboard by remember { mutableStateOf(false) }
+
+    // Auto-scroll al final
+    LaunchedEffect(messages.size) {
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.size - 1)
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -47,6 +57,7 @@ fun ChatScreen() {
             .background(Color(0xFFF5F5F5))
     ) {
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
@@ -54,27 +65,43 @@ fun ChatScreen() {
             contentPadding = PaddingValues(top = 16.dp, bottom = 16.dp)
         ) {
             items(messages) { message ->
-                ChatBubble(message)
+                ChatBubble(message, fontSize)
             }
         }
 
         ChatInputBar(
             text = inputText,
-            onTextChange = { inputText = it },
+            onTextChange = { viewModel.updateDraft(it) },
             onSend = {
                 if (inputText.isNotBlank()) {
-                    val userQuery = inputText
-                    messages = messages + ChatMessage(userQuery, true)
-                    inputText = ""
-                    messages = messages + ChatMessage("Entiendo que quieres decir: '$userQuery'. Estoy procesando tu solicitud...", false)
+                    viewModel.sendMessage(inputText)
+                    showCustomKeyboard = false
                 }
-            }
+            },
+            useCustomKeyboard = useCustomKeyboard,
+            showCustomKeyboard = showCustomKeyboard,
+            onToggleCustomKeyboard = { showCustomKeyboard = it },
+            fontSize = fontSize
         )
+        
+        if (useCustomKeyboard && showCustomKeyboard) {
+            CustomKeyboard(
+                onKeyClick = { viewModel.updateDraft(inputText + it) },
+                onDeleteClick = { if (inputText.isNotEmpty()) viewModel.updateDraft(inputText.dropLast(1)) },
+                onSpaceClick = { viewModel.updateDraft(inputText + " ") },
+                onEnterClick = {
+                    if (inputText.isNotBlank()) {
+                        viewModel.sendMessage(inputText)
+                        showCustomKeyboard = false
+                    }
+                }
+            )
+        }
     }
 }
 
 @Composable
-fun ChatBubble(message: ChatMessage) {
+fun ChatBubble(message: ChatMessage, fontSize: Int) {
     val alignment = if (message.isUser) Alignment.CenterEnd else Alignment.CenterStart
     val backgroundColor = if (message.isUser) Color(0xFF5046BD) else Color(0xFFE0E0E0)
     val textColor = if (message.isUser) Color.White else Color.Black
@@ -99,7 +126,7 @@ fun ChatBubble(message: ChatMessage) {
                 text = message.text,
                 modifier = Modifier.padding(12.dp),
                 color = textColor,
-                fontSize = 16.sp
+                fontSize = fontSize.sp
             )
         }
     }
@@ -109,18 +136,33 @@ fun ChatBubble(message: ChatMessage) {
 fun ChatInputBar(
     text: String,
     onTextChange: (String) -> Unit,
-    onSend: () -> Unit
+    onSend: () -> Unit,
+    useCustomKeyboard: Boolean,
+    showCustomKeyboard: Boolean,
+    onToggleCustomKeyboard: (Boolean) -> Unit,
+    fontSize: Int
 ) {
     val context = LocalContext.current
-    val voiceParser = remember { VoiceToTextParser(context.applicationContext as Application) }
-    val voiceState by voiceParser.state.collectAsState()
+    val isPreview = LocalInspectionMode.current
+    val application = context.applicationContext as? Application
     
-    // Gestor de permisos
+    val voiceParser = remember {
+        if (!isPreview && application != null) {
+            VoiceToTextParser(application)
+        } else null
+    }
+
+    val voiceState by if (voiceParser != null) {
+        voiceParser.state.collectAsState()
+    } else {
+        remember { mutableStateOf(VoiceToTextParserState()) }
+    }
+    
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
         onResult = { isGranted ->
             if (isGranted) {
-                voiceParser.startListening()
+                voiceParser?.startListening()
             } else {
                 Toast.makeText(context, "Permiso de micrófono denegado", Toast.LENGTH_SHORT).show()
             }
@@ -146,18 +188,29 @@ fun ChatInputBar(
             horizontalArrangement = Arrangement.End
         ) {
             AnimatedVisibility(visible = voiceState.isSpeaking) {
-                // Visualizador mejorado para que no se deforme
                 ChatSoundWaveVisualizer(amplitude = voiceState.amplitude)
             }
             
             Spacer(modifier = Modifier.width(12.dp))
 
+            if (useCustomKeyboard) {
+                FloatingActionButton(
+                    onClick = { onToggleCustomKeyboard(!showCustomKeyboard) },
+                    containerColor = if (showCustomKeyboard) Color(0xFF6A5EEC) else Color(0xFFF0F0F0),
+                    contentColor = if (showCustomKeyboard) Color.White else Color.Black,
+                    modifier = Modifier.size(56.dp),
+                    shape = CircleShape
+                ) {
+                    Icon(Icons.Default.Keyboard, contentDescription = "Teclado Propio")
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+            }
+
             FloatingActionButton(
                 onClick = { 
                     if (voiceState.isSpeaking) {
-                        voiceParser.stopListening()
+                        voiceParser?.stopListening()
                     } else {
-                        // Solicitar permiso antes de escuchar
                         permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                     }
                 },
@@ -185,18 +238,21 @@ fun ChatInputBar(
                     .fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                @OptIn(ExperimentalMaterial3Api::class)
                 TextField(
                     value = text,
                     onValueChange = onTextChange,
                     modifier = Modifier.weight(1f),
-                    placeholder = { Text("Escribe a Nero...") },
+                    placeholder = { Text("Escribe a Nero...", fontSize = fontSize.sp) },
                     colors = TextFieldDefaults.colors(
                         focusedContainerColor = Color(0xFFF0F0F0),
                         unfocusedContainerColor = Color(0xFFF0F0F0),
                         focusedIndicatorColor = Color.Transparent,
                         unfocusedIndicatorColor = Color.Transparent
                     ),
-                    shape = RoundedCornerShape(24.dp)
+                    shape = RoundedCornerShape(24.dp),
+                    readOnly = useCustomKeyboard && showCustomKeyboard,
+                    textStyle = LocalTextStyle.current.copy(fontSize = fontSize.sp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 IconButton(
@@ -225,7 +281,6 @@ fun ChatSoundWaveVisualizer(amplitude: Float) {
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         repeat(5) { index ->
-            // Normalizamos la amplitud para que no crezca infinitamente (limite de 40.dp)
             val normalizedHeight = (10 + (amplitude.coerceIn(0f, 15f) * 2)).dp
             
             val animatedHeight by animateDpAsState(
@@ -241,10 +296,4 @@ fun ChatSoundWaveVisualizer(amplitude: Float) {
             )
         }
     }
-}
-
-@Composable
-@Preview(showBackground = true)
-fun ChatScreenPreview() {
-    ChatScreen()
 }

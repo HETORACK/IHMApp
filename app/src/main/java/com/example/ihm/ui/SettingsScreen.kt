@@ -40,7 +40,11 @@ fun SettingsScreen(
             .padding(16.dp)
     ) {
         // Carrusel de tamaño de letra VERTICAL
-        Text(text = "Tamaño de letra mínimo", fontWeight = FontWeight.Medium)
+        Text(
+            text = "Tamaño de letra mínimo",
+            fontSize = fontSize.sp,
+            fontWeight = FontWeight.Medium
+        )
         Spacer(modifier = Modifier.height(16.dp))
 
         VerticalFontSizePicker(
@@ -54,7 +58,8 @@ fun SettingsScreen(
         SettingSwitch(
             label = "Modo Oscuro",
             checked = isDarkMode,
-            onCheckedChange = onDarkModeChange
+            onCheckedChange = onDarkModeChange,
+            fontSize = fontSize
         )
 
         // Voz y Texto
@@ -62,7 +67,8 @@ fun SettingsScreen(
             label = "Respuesta con Voz y Texto",
             checked = voiceResponse,
             onCheckedChange = onVoiceResponseChange,
-            description = if (voiceResponse) "Voz + Texto" else "Solo Texto"
+            description = if (voiceResponse) "Voz + Texto" else "Solo Texto" ,
+            fontSize = fontSize
         )
 
         // Teclado Propio
@@ -73,14 +79,21 @@ fun SettingsScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(text = "Teclado", fontWeight = FontWeight.Medium)
+            Text(
+                text = "Teclado",
+                fontSize = fontSize.sp,
+                fontWeight = FontWeight.Medium
+            )
             Button(
                 onClick = { onCustomKeyboardChange(!customKeyboard) },
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color(0xFF6A5EEC)
                 )
             ) {
-                Text(text = if (customKeyboard) "Propio de la App" else "Normal del Celular")
+                Text(
+                    text = if (customKeyboard) "Propio de la App" else "Normal del Celular",
+                    fontSize = (fontSize - 2).coerceAtLeast(12).sp
+                )
             }
         }
 
@@ -88,7 +101,8 @@ fun SettingsScreen(
         SettingSwitch(
             label = "Ocultar botón de micrófono",
             checked = hideMicButton,
-            onCheckedChange = onHideMicButtonChange
+            onCheckedChange = onHideMicButtonChange,
+            fontSize = fontSize
         )
     }
 }
@@ -192,7 +206,8 @@ fun SettingSwitch(
     label: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
-    description: String? = null
+    description: String? = null,
+    fontSize: Int
 ) {
     Row(
         modifier = Modifier
@@ -201,10 +216,18 @@ fun SettingSwitch(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Column {
-            Text(text = label, fontWeight = FontWeight.Medium)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = label,
+                fontSize = fontSize.sp,
+                fontWeight = FontWeight.Medium
+            )
             if (description != null) {
-                Text(text = description, fontSize = 12.sp, color = Color.Gray)
+                Text(
+                    text = description,
+                    fontSize = (fontSize - 4).coerceAtLeast(10).sp,
+                    color = Color.Gray
+                )
             }
         }
         Switch(
