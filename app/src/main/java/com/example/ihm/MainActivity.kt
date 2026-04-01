@@ -1,10 +1,15 @@
 package com.example.ihm
 
+import android.Manifest
 import android.app.Activity
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
@@ -21,14 +26,25 @@ class MainActivity : ComponentActivity() {
         setContent {
             val view = LocalView.current
             val context = LocalContext.current
+
+            // SOLICITUD DE PERMISO DE NOTIFICACIONES (Android 13+)
+            val notificationPermissionLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.RequestPermission(),
+                onResult = { isGranted ->
+                    // Aquí podrías manejar si el usuario deniega el permiso
+                }
+            )
+
+            LaunchedEffect(Unit) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
+            }
+
             if (!view.isInEditMode) {
                 SideEffect {
                     val window = (context as Activity).window
-
-                    // 1. Define tu color específico (ejemplo: el púrpura de tu barra)
                     val colorEspecifico = Color(0xFF000000).toArgb()
-
-                    // 2. Aplica el color a la barra de navegación
                     window.navigationBarColor = colorEspecifico
                     WindowCompat.getInsetsController(window, view).apply {
                         isAppearanceLightNavigationBars = false

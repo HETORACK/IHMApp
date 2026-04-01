@@ -15,6 +15,7 @@ import com.example.ihm.data.RecordatorioEntity
 import com.example.ihm.data.SubTask
 import com.example.ihm.network.*
 import com.example.ihm.receiver.AlarmReceiver
+import com.example.ihm.receiver.TaskReceiver
 import com.example.ihm.ui.ChatMessage
 import com.google.gson.Gson
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -40,7 +41,8 @@ data class GeminiProductivityAction(
     val daysOfWeek: List<Int>? = emptyList(),
     val excludedDates: List<String>? = emptyList(),
     val isAnnual: Boolean? = false,
-    val id: Int? = null
+    val id: Int? = null,
+    val ids: List<Int>? = null
 )
 
 class ChatViewModel(
@@ -58,22 +60,23 @@ class ChatViewModel(
     private val _draftMessage = MutableStateFlow("")
     val draftMessage = _draftMessage.asStateFlow()
 
-    private val apiKey = "AIzaSyApVvl8Ii4hdaauMUviU8WrO7OKc7oHj_4"
+    private val apiKey = ""
 
     private val systemPrompt = """
         Eres Nero, un asistente. 
         SI LA INTENCIÓN ES CREATE:
-        Genera el JSON con el campo "intent": "CREATE" y llena los campos necesarios. El "id" debe ser null.
+        Genera el JSON con el campo "intent": "CREATE" y llena los campos necesarios. El "id" debe ser null. Si contiene varias tareas o una lista de objetos agregalos como subtareas.
         SI LA INTENCIÓN ES DELETE, UPDATE o READ:
             1. Si no hay una lista bajo "CONTEXTO_ACTUAL", responde solo: NEED_CONTEXT.
             2. Si hay contexto:
-               - DELETE: Devuelve {"intent": "DELETE", "id": [ID_DEL_CONTEXTO]}.
-               - UPDATE: Devuelve el JSON completo con "intent": "UPDATE", el "id" correspondiente y SOLO los campos que el usuario quiere cambiar actualizados (mantén los demás como los recibiste).
+               - DELETE: Devuelve {"intent": "DELETE", "ids": [id1, id2, ...]} siempre usa una lista en "ids" incluso para uno solo. 
+               - UPDATE: Devuelve el JSON completo with "intent": "UPDATE", el "id" correspondiente y SOLO los campos que el usuario quiere cambiar actualizados (mantén los demás como los recibiste). Si el usuario menciona pasos o subtareas, actualiza el campo "subtasks".
                - READ: Devuelve {"intent": "READ", "summary": "Aquí tienes la información sobre..."}.
         FORMATO JSON:
         {
              "intent": "CREATE/UPDATE/DELETE/READ",
              "id": id_numerico_si_aplica,
+             "ids": [lista_de_ids_para_delete],
              "category": "Evento/Alarma/Tarea/Rutina", 
              "icono": "Medicina/CitaMedica/Ejercicio/Rutina/Social/Profesional/Compras/Alimentos/Bebida/Cocina/Llamada/Despertador/Temporizador/Cumpleaños/FestivoMexicano/Fiesta/EventoTrabajo",
              "title": "título",
@@ -96,6 +99,34 @@ class ChatViewModel(
         _draftMessage.value = text
     }
 
+    fun clearMessages() {
+        _messages.value = listOf(
+            ChatMessage("¡Hola! Soy Nero, tu asistente IA. ¿En qué puedo ayudarte hoy?", false)
+        )
+        _draftMessage.value = ""
+    }
+
+    private fun buildContents(msgs: List<ChatMessage>): List<Content> {
+        val contents = mutableListOf<Content>()
+        val sdfContext = SimpleDateFormat("EEEE, d 'de' MMMM 'de' yyyy, HH:mm", Locale.getDefault())
+        val basePromptWithTime = "$systemPrompt\n\nFECHA Y HORA ACTUAL: ${sdfContext.format(Date())}"
+        
+        contents.add(Content(role = "user", parts = listOf(Part(text = basePromptWithTime))))
+        contents.add(Content(role = "model", parts = listOf(Part(text = "Entendido. Soy Nero. ¿En qué puedo ayudarte?"))))
+        
+        msgs.takeLast(10).forEach { msg ->
+            val role = if (msg.isUser) "user" else "model"
+            if (contents.lastOrNull()?.role != role) {
+                contents.add(Content(role = role, parts = listOf(Part(text = msg.text))))
+            } else {
+                val lastContent = contents.last()
+                val updatedParts = lastContent.parts + Part(text = "\n" + msg.text)
+                contents[contents.size - 1] = lastContent.copy(parts = updatedParts)
+            }
+        }
+        return contents
+    }
+
     fun sendMessage(text: String) {
         if (text.isBlank() || _isLoading.value) return
         val userMessage = ChatMessage(text, true)
@@ -105,36 +136,23 @@ class ChatViewModel(
 
         viewModelScope.launch {
             try {
-                val sdfContext = SimpleDateFormat("EEEE, d 'de' MMMM 'de' yyyy, HH:mm", Locale.getDefault())
-                val currentTimeContext = sdfContext.format(Date())
-                val basePrompt = "$systemPrompt\n\nFECHA Y HORA ACTUAL: $currentTimeContext"
-
-                fun buildContents(msgs: List<ChatMessage>): List<Content> {
-                    val contents = mutableListOf<Content>()
-                    contents.add(Content(role = "user", parts = listOf(Part(text = basePrompt))))
-                    contents.add(Content(role = "model", parts = listOf(Part(text = "Entendido. ¿En qué puedo ayudarte hoy?"))))
-                    msgs.forEach { msg ->
-                        contents.add(Content(role = if (msg.isUser) "user" else "model", parts = listOf(Part(text = msg.text))))
-                    }
-                    return contents
-                }
-
-                // Primera llamada a Gemini
-                val firstRequest = GeminiRequest(contents = buildContents(_messages.value.drop(1)))
+                val firstRequest = GeminiRequest(contents = buildContents(_messages.value))
                 val firstResponse = GeminiClient.instance.generateContent(apiKey, firstRequest)
-                var responseText = firstResponse.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "Lo siento."
+                val responseText = firstResponse.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: ""
 
-                // Manejo de NEED_CONTEXT
-                if (responseText.trim() == "NEED_CONTEXT") {
+                if (responseText.contains("NEED_CONTEXT", ignoreCase = true)) {
                     val contextData = getContextData()
-                    val augmentedMessages = _messages.value.drop(1) + ChatMessage("CONTEXTO_ACTUAL:\n$contextData", true)
-                    val secondRequest = GeminiRequest(contents = buildContents(augmentedMessages))
+                    val contextMessage = ChatMessage("CONTEXTO_ACTUAL DE MI AGENDA:\n$contextData\n\nPor favor, ahora procesa mi solicitud anterior con esta información.", true)
+                    val temporaryHistory = _messages.value + ChatMessage("NEED_CONTEXT", false) + contextMessage
+                    val secondRequest = GeminiRequest(contents = buildContents(temporaryHistory))
                     val secondResponse = GeminiClient.instance.generateContent(apiKey, secondRequest)
-                    responseText = secondResponse.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "No pude obtener el contexto necesario."
+                    val finalResponse = secondResponse.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "No pude procesar la solicitud con el contexto."
+                    processGeminiResponse(finalResponse)
+                } else {
+                    processGeminiResponse(responseText)
                 }
-
-                processGeminiResponse(responseText)
             } catch (e: Exception) {
+                Log.e("ChatViewModel", "Error en sendMessage", e)
                 _messages.value += ChatMessage("Error: ${e.message}", false)
             } finally {
                 _isLoading.value = false
@@ -143,86 +161,84 @@ class ChatViewModel(
     }
 
     private suspend fun getContextData(): String {
-        val start = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -7) }.timeInMillis
-        val end = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, 7) }.timeInMillis
-        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-
         return try {
             val all = repository.allRecordatorios.first()
-            val filtered = all.filter { it.fecha in start..end || it.esAnual || it.diasSemana.isNotEmpty() }
-            if (filtered.isEmpty()) "No hay tareas registradas en el periodo cercano."
-            else filtered.joinToString("\n") {
-                "ID: ${it.id} | Titulo: ${it.titulo} | Fecha: ${sdf.format(Date(it.fecha))} | Hora: ${it.hora ?: "N/A"} | Cat: ${it.categoria}"
+            if (all.isEmpty()) "La agenda está actualmente vacía. No hay tareas para actualizar o borrar."
+            else all.joinToString("\n") {
+                "ID: ${it.id} | Título: ${it.titulo} | Fecha: ${it.fecha} | Hora: ${it.hora} | Categoría: ${it.categoria} | Subtareas: ${it.subtasks.joinToString { st -> st.title }}"
             }
-        } catch (e: Exception) { "Error al obtener contexto de la base de datos." }
+        } catch (e: Exception) { "Error al acceder a la base de datos." }
     }
 
-    private fun processGeminiResponse(text: String) {
-        val jsonStart = text.indexOf("{")
-        val jsonEnd = text.lastIndexOf("}")
-        if (jsonStart != -1 && jsonEnd != -1) {
-            val jsonString = text.substring(jsonStart, jsonEnd + 1)
+    private suspend fun processGeminiResponse(text: String) {
+        val jsonRegex = Regex("\\{.*\\}", RegexOption.DOT_MATCHES_ALL)
+        val match = jsonRegex.find(text)
+
+        if (match != null) {
             try {
-                val action = Gson().fromJson(jsonString, GeminiProductivityAction::class.java)
+                val action = Gson().fromJson(match.value, GeminiProductivityAction::class.java)
                 handleProductivityAction(action)
                 
                 val feedback = when(action.intent) {
-                    "CREATE" -> "¡Hecho! He creado: ${action.title}."
-                    "UPDATE" -> "He actualizado el registro correctamente."
-                    "DELETE" -> "He eliminado el registro solicitado."
-                    "READ" -> action.summary ?: "Aquí tienes la información que encontré."
-                    else -> "Acción completada con éxito."
+                    "CREATE" -> "¡Listo! He guardado '${action.title}'."
+                    "UPDATE" -> "He actualizado '${action.title ?: "el registro"}' con éxito."
+                    "DELETE" -> "He eliminado lo que me pediste."
+                    "READ" -> action.summary ?: "Aquí tienes la información."
+                    else -> "Hecho."
                 }
                 _messages.value += ChatMessage(feedback, false)
-            } catch (e: Exception) { 
-                _messages.value += ChatMessage(text, false) 
+            } catch (e: Exception) {
+                _messages.value += ChatMessage(text, false)
             }
-        } else { 
-            _messages.value += ChatMessage(text, false) 
+        } else {
+            _messages.value += ChatMessage(text, false)
         }
     }
 
-    private fun handleProductivityAction(action: GeminiProductivityAction) {
-        viewModelScope.launch {
-            val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-            when (action.intent) {
-                "CREATE" -> {
-                    val startDate = action.date?.let { try { sdf.parse(it)?.time } catch (e: Exception) { null } } ?: Calendar.getInstance().timeInMillis
-                    val recordatorio = RecordatorioEntity(
-                        titulo = action.title ?: "Sin título",
-                        descripcion = action.summary ?: "",
-                        fecha = startDate,
-                        hora = action.time,
-                        categoria = action.category ?: "Tarea",
-                        esAnual = action.isAnnual ?: false,
-                        subtasks = action.subtasks?.map { SubTask(it) } ?: emptyList(),
-                        diasSemana = action.daysOfWeek ?: emptyList()
-                    )
-                    val id = repository.insert(recordatorio).toInt()
-                    if (action.category == "Alarma" && action.time != null) programarAlarma(id, action.title ?: "Alarma", startDate, action.time)
+    private suspend fun handleProductivityAction(action: GeminiProductivityAction) {
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        when (action.intent) {
+            "CREATE" -> {
+                val date = action.date?.let { try { sdf.parse(it)?.time } catch (e: Exception) { null } } ?: System.currentTimeMillis()
+                val recordatorio = RecordatorioEntity(
+                    titulo = action.title ?: "Sin título",
+                    descripcion = action.summary ?: "",
+                    fecha = date,
+                    hora = action.time,
+                    categoria = action.category ?: "Tarea",
+                    subtasks = action.subtasks?.map { SubTask(it) } ?: emptyList()
+                )
+                val id = repository.insert(recordatorio).toInt()
+                
+                when (action.category) {
+                    "Alarma" -> if (action.time != null) programarAlarma(id, action.title ?: "Alarma", date, action.time)
+                    "Tarea" -> programarNotificacionTarea(id, action.title ?: "Tarea", date, action.time)
+                    "Evento" -> programarNotificacionEvento(id, action.title ?: "Evento", date)
                 }
-                "UPDATE" -> {
-                    action.id?.let { id ->
-                        val existingList = repository.allRecordatorios.first()
-                        existingList.find { it.id == id }?.let { existing ->
-                            val updatedDate = action.date?.let { try { sdf.parse(it)?.time } catch (e: Exception) { null } } ?: existing.fecha
-                            val updated = existing.copy(
-                                titulo = action.title ?: existing.titulo,
-                                descripcion = action.summary ?: existing.descripcion,
-                                fecha = updatedDate,
-                                hora = action.time ?: existing.hora,
-                                categoria = action.category ?: existing.categoria,
-                                esAnual = action.isAnnual ?: existing.esAnual,
-                                subtasks = action.subtasks?.map { SubTask(it) } ?: existing.subtasks,
-                                diasSemana = action.daysOfWeek ?: existing.diasSemana
-                            )
-                            repository.update(updated)
+            }
+            "UPDATE" -> {
+                action.id?.let { id ->
+                    val existing = repository.allRecordatorios.first().find { it.id == id }
+                    existing?.let {
+                        val updated = it.copy(
+                            titulo = action.title ?: it.titulo,
+                            descripcion = action.summary ?: it.descripcion,
+                            hora = action.time ?: it.hora,
+                            subtasks = if (action.subtasks != null) action.subtasks.map { s -> SubTask(s) } else it.subtasks
+                        )
+                        repository.update(updated)
+                        
+                        when (updated.categoria) {
+                            "Alarma" -> if (updated.hora != null) programarAlarma(id, updated.titulo, updated.fecha, updated.hora)
+                            "Tarea" -> programarNotificacionTarea(id, updated.titulo, updated.fecha, updated.hora)
+                            "Evento" -> programarNotificacionEvento(id, updated.titulo, updated.fecha)
                         }
                     }
                 }
-                "DELETE" -> {
-                    action.id?.let { repository.deleteById(it) }
-                }
+            }
+            "DELETE" -> {
+                action.id?.let { repository.deleteById(it) }
+                action.ids?.forEach { repository.deleteById(it) }
             }
         }
     }
@@ -250,7 +266,78 @@ class ChatViewModel(
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
+        val calendar = getCalendarForTime(fecha, hora)
+
+        if (calendar.timeInMillis <= System.currentTimeMillis()) calendar.add(Calendar.DAY_OF_YEAR, 1)
+
+        val info = AlarmManager.AlarmClockInfo(calendar.timeInMillis, pendingIntent)
+        alarmManager.setAlarmClock(info, pendingIntent)
+    }
+
+    private fun programarNotificacionTarea(id: Int, titulo: String, fecha: Long, hora: String?) {
+        val context = getApplication<Application>()
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        
+        val intent = Intent(context, TaskReceiver::class.java).apply {
+            putExtra(TaskReceiver.EXTRA_TASK_ID, id)
+            putExtra("TITLE", titulo)
+            putExtra(TaskReceiver.EXTRA_TYPE, "TASK")
+        }
+
+        // Notificación a la hora exacta
+        val calendar = if (hora != null) getCalendarForTime(fecha, hora) else Calendar.getInstance().apply { timeInMillis = fecha }
+        
+        val pendingIntentExact = PendingIntent.getBroadcast(
+            context, id, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        
+        if (calendar.timeInMillis > System.currentTimeMillis()) {
+            alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntentExact)
+        }
+
+        // Notificación 15 minutos antes
+        val calendarBefore = (calendar.clone() as Calendar).apply { add(Calendar.MINUTE, -15) }
+        val pendingIntentBefore = PendingIntent.getBroadcast(
+            context, id + 20000, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        
+        if (calendarBefore.timeInMillis > System.currentTimeMillis()) {
+            alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, calendarBefore.timeInMillis, pendingIntentBefore)
+        }
+    }
+
+    private fun programarNotificacionEvento(id: Int, titulo: String, fecha: Long) {
+        val context = getApplication<Application>()
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        
+        val intent = Intent(context, TaskReceiver::class.java).apply {
+            putExtra(TaskReceiver.EXTRA_TASK_ID, id)
+            putExtra("TITLE", titulo)
+            putExtra(TaskReceiver.EXTRA_TYPE, "EVENT")
+        }
+
+        // Notificar 3 días antes cada mañana (ej: 8:00 AM)
         val calendar = Calendar.getInstance().apply {
+            timeInMillis = fecha
+            set(Calendar.HOUR_OF_DAY, 8)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            add(Calendar.DAY_OF_YEAR, -3)
+        }
+
+        for (i in 0..3) {
+            val notifyCalendar = (calendar.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, i) }
+            if (notifyCalendar.timeInMillis > System.currentTimeMillis()) {
+                val pendingIntent = PendingIntent.getBroadcast(
+                    context, id + 30000 + i, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                )
+                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, notifyCalendar.timeInMillis, pendingIntent)
+            }
+        }
+    }
+
+    private fun getCalendarForTime(fecha: Long, hora: String): Calendar {
+        return Calendar.getInstance().apply {
             timeInMillis = fecha
             val parts = hora.split(":")
             if (parts.size >= 2) {
@@ -260,10 +347,5 @@ class ChatViewModel(
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
         }
-
-        if (calendar.timeInMillis <= System.currentTimeMillis()) calendar.add(Calendar.DAY_OF_YEAR, 1)
-
-        val info = AlarmManager.AlarmClockInfo(calendar.timeInMillis, pendingIntent)
-        alarmManager.setAlarmClock(info, pendingIntent)
     }
 }

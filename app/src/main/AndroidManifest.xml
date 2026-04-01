@@ -46,6 +46,15 @@
             android:enabled="true"
             android:exported="false" />
 
+        <receiver
+            android:name=".receiver.TaskReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="ACTION_MARK_DONE" />
+            </intent-filter>
+        </receiver>
+
     </application>
 
 </manifest>

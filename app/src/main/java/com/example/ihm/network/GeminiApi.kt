@@ -24,6 +24,7 @@ data class GeminiResponse(
 data class Candidate(
     val content: Content
 )
+
 interface GeminiApi {
     @POST("v1beta/models/gemini-2.5-flash:generateContent")
     suspend fun generateContent(

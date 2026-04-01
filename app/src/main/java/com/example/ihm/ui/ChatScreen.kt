@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.*
@@ -44,14 +45,14 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     var showCustomKeyboard by remember { mutableStateOf(false) }
 
-    // Auto-scroll al final
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.size - 1)
         }
     }
 
-    Column(
+    // Usamos Box para permitir que los controles floten sobre el chat
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFFF5F5F5))
@@ -59,43 +60,49 @@ fun ChatScreen(
         LazyColumn(
             state = listState,
             modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
+                .fillMaxSize()
                 .padding(horizontal = 16.dp),
-            contentPadding = PaddingValues(top = 16.dp, bottom = 16.dp)
+            // Aumentamos el padding inferior para que el contenido no quede oculto bajo el input bar
+            contentPadding = PaddingValues(top = 16.dp, bottom = 180.dp)
         ) {
             items(messages) { message ->
                 ChatBubble(message, fontSize)
             }
         }
 
-        ChatInputBar(
-            text = inputText,
-            onTextChange = { viewModel.updateDraft(it) },
-            onSend = {
-                if (inputText.isNotBlank()) {
-                    viewModel.sendMessage(inputText)
-                    showCustomKeyboard = false
-                }
-            },
-            useCustomKeyboard = useCustomKeyboard,
-            showCustomKeyboard = showCustomKeyboard,
-            onToggleCustomKeyboard = { showCustomKeyboard = it },
-            fontSize = fontSize
-        )
-        
-        if (useCustomKeyboard && showCustomKeyboard) {
-            CustomKeyboard(
-                onKeyClick = { viewModel.updateDraft(inputText + it) },
-                onDeleteClick = { if (inputText.isNotEmpty()) viewModel.updateDraft(inputText.dropLast(1)) },
-                onSpaceClick = { viewModel.updateDraft(inputText + " ") },
-                onEnterClick = {
+        // El InputBar ahora flota en la parte inferior
+        Column(
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            ChatInputBar(
+                text = inputText,
+                onTextChange = { viewModel.updateDraft(it) },
+                onSend = {
                     if (inputText.isNotBlank()) {
                         viewModel.sendMessage(inputText)
                         showCustomKeyboard = false
                     }
-                }
+                },
+                onClear = { viewModel.clearMessages() },
+                useCustomKeyboard = useCustomKeyboard,
+                showCustomKeyboard = showCustomKeyboard,
+                onToggleCustomKeyboard = { showCustomKeyboard = it },
+                fontSize = fontSize
             )
+            
+            if (useCustomKeyboard && showCustomKeyboard) {
+                CustomKeyboard(
+                    onKeyClick = { viewModel.updateDraft(inputText + it) },
+                    onDeleteClick = { if (inputText.isNotEmpty()) viewModel.updateDraft(inputText.dropLast(1)) },
+                    onSpaceClick = { viewModel.updateDraft(inputText + " ") },
+                    onEnterClick = {
+                        if (inputText.isNotBlank()) {
+                            viewModel.sendMessage(inputText)
+                            showCustomKeyboard = false
+                        }
+                    }
+                )
+            }
         }
     }
 }
@@ -137,6 +144,7 @@ fun ChatInputBar(
     text: String,
     onTextChange: (String) -> Unit,
     onSend: () -> Unit,
+    onClear: () -> Unit,
     useCustomKeyboard: Boolean,
     showCustomKeyboard: Boolean,
     onToggleCustomKeyboard: (Boolean) -> Unit,
@@ -157,6 +165,8 @@ fun ChatInputBar(
     } else {
         remember { mutableStateOf(VoiceToTextParserState()) }
     }
+
+    var baseTextByVoice by remember { mutableStateOf("") }
     
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
@@ -170,38 +180,59 @@ fun ChatInputBar(
     )
 
     LaunchedEffect(voiceState.spokenText) {
-        if (voiceState.spokenText.isNotEmpty()) {
-            onTextChange(voiceState.spokenText)
+        if (voiceState.isSpeaking && voiceState.spokenText.isNotEmpty()) {
+            val prefix = if (baseTextByVoice.isBlank()) "" else "$baseTextByVoice "
+            onTextChange(prefix + voiceState.spokenText)
         }
     }
 
+    // El contenedor principal ahora es transparente
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color.Transparent)
+            .padding(bottom = 8.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.End
+                .padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
+            // Botón de Limpiar flotante e independiente
+            FloatingActionButton(
+                onClick = onClear,
+                containerColor = Color.White.copy(alpha = 0.9f),
+                contentColor = Color(0xFFE53935),
+                modifier = Modifier.size(42.dp),
+                shape = CircleShape,
+                elevation = FloatingActionButtonDefaults.elevation(4.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = "Limpiar historial",
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.weight(1f))
+
             AnimatedVisibility(visible = voiceState.isSpeaking) {
                 ChatSoundWaveVisualizer(amplitude = voiceState.amplitude)
             }
             
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(8.dp))
 
             if (useCustomKeyboard) {
                 FloatingActionButton(
                     onClick = { onToggleCustomKeyboard(!showCustomKeyboard) },
-                    containerColor = if (showCustomKeyboard) Color(0xFF6A5EEC) else Color(0xFFF0F0F0),
+                    containerColor = if (showCustomKeyboard) Color(0xFF6A5EEC) else Color.White.copy(alpha = 0.9f),
                     contentColor = if (showCustomKeyboard) Color.White else Color.Black,
-                    modifier = Modifier.size(56.dp),
-                    shape = CircleShape
+                    modifier = Modifier.size(42.dp),
+                    shape = CircleShape,
+                    elevation = FloatingActionButtonDefaults.elevation(4.dp)
                 ) {
-                    Icon(Icons.Default.Keyboard, contentDescription = "Teclado Propio")
+                    Icon(Icons.Default.Keyboard, contentDescription = "Teclado", modifier = Modifier.size(20.dp))
                 }
                 Spacer(modifier = Modifier.width(8.dp))
             }
@@ -211,59 +242,67 @@ fun ChatInputBar(
                     if (voiceState.isSpeaking) {
                         voiceParser?.stopListening()
                     } else {
+                        baseTextByVoice = text.trim()
                         permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                     }
                 },
                 containerColor = if (voiceState.isSpeaking) Color(0xFF4CAF50) else Color(0xFF6ED1B8),
                 contentColor = Color.White,
-                modifier = Modifier.size(64.dp),
-                shape = CircleShape
+                modifier = Modifier.size(54.dp),
+                shape = CircleShape,
+                elevation = FloatingActionButtonDefaults.elevation(6.dp)
             ) {
                 Icon(
                     imageVector = Icons.Default.Mic,
-                    contentDescription = "Dictar mensaje",
-                    modifier = Modifier.size(32.dp)
+                    contentDescription = "Dictar",
+                    modifier = Modifier.size(26.dp)
                 )
             }
         }
 
+        // Surface para el TextField, ahora con márgenes para que parezca flotar
         Surface(
             tonalElevation = 8.dp,
-            modifier = Modifier.fillMaxWidth(),
-            color = Color.White
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            color = Color.White.copy(alpha = 0.95f),
+            shape = RoundedCornerShape(32.dp),
+            shadowElevation = 4.dp
         ) {
             Row(
                 modifier = Modifier
-                    .padding(16.dp)
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
                     .fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 @OptIn(ExperimentalMaterial3Api::class)
                 TextField(
                     value = text,
-                    onValueChange = onTextChange,
+                    onValueChange = { 
+                        onTextChange(it)
+                        if (!voiceState.isSpeaking) baseTextByVoice = it.trim()
+                    },
                     modifier = Modifier.weight(1f),
-                    placeholder = { Text("Escribe a Nero...", fontSize = fontSize.sp) },
+                    placeholder = { Text("Escribe a Nero...", fontSize = (fontSize - 2).sp) },
                     colors = TextFieldDefaults.colors(
-                        focusedContainerColor = Color(0xFFF0F0F0),
-                        unfocusedContainerColor = Color(0xFFF0F0F0),
+                        focusedContainerColor = Color.Transparent,
+                        unfocusedContainerColor = Color.Transparent,
                         focusedIndicatorColor = Color.Transparent,
                         unfocusedIndicatorColor = Color.Transparent
                     ),
-                    shape = RoundedCornerShape(24.dp),
                     readOnly = useCustomKeyboard && showCustomKeyboard,
                     textStyle = LocalTextStyle.current.copy(fontSize = fontSize.sp)
                 )
-                Spacer(modifier = Modifier.width(8.dp))
                 IconButton(
                     onClick = onSend,
                     colors = IconButtonDefaults.iconButtonColors(
                         containerColor = Color(0xFF5046BD),
                         contentColor = Color.White
                     ),
-                    modifier = Modifier.size(48.dp)
+                    modifier = Modifier.size(44.dp)
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Enviar")
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Enviar", modifier = Modifier.size(20.dp))
                 }
             }
         }
@@ -275,22 +314,20 @@ fun ChatSoundWaveVisualizer(amplitude: Float) {
     Row(
         modifier = Modifier
             .padding(end = 8.dp)
-            .background(Color(0xFF6750A4), RoundedCornerShape(32.dp))
-            .padding(horizontal = 20.dp, vertical = 12.dp),
+            .background(Color(0xFF6750A4).copy(alpha = 0.8f), RoundedCornerShape(32.dp))
+            .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         repeat(5) { index ->
-            val normalizedHeight = (10 + (amplitude.coerceIn(0f, 15f) * 2)).dp
-            
+            val normalizedHeight = (8 + (amplitude.coerceIn(0f, 15f) * 1.5f)).dp
             val animatedHeight by animateDpAsState(
                 targetValue = normalizedHeight,
                 animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy)
             )
-
             Box(
                 modifier = Modifier
-                    .width(4.dp)
+                    .width(3.dp)
                     .height(animatedHeight)
                     .background(Color.White, CircleShape)
             )
